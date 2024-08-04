@@ -4,25 +4,27 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     layout::{Alignment, Rect},
-    style::Stylize,
+    style::{Style, Stylize},
     symbols::border,
-    text::{Line, Text},
+    text::{Line, Span, Text},
     widgets::{
         block::{Position, Title},
-        Block, Paragraph, Widget,
+        Block, Paragraph, Widget, Wrap,
     },
     Frame,
 };
 
+use sysinfo::System;
+
 mod tui;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct App {
     host: String,
-    cpus: u8,
-    cpu_usage: u8,
-    total_memory: u64,
-    used_memory: u64,
+    cpus: usize,
+    // cpu_usage: u8,
+    total_memory: f32,
+    used_memory: f32,
     exit: bool,
 }
 
@@ -53,11 +55,8 @@ impl App {
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) {
-        match key_event.code {
-            KeyCode::Char('q') => self.exit(),
-            // KeyCode::Left => self.decrement_counter(),
-            // KeyCode::Right => self.increment_counter(),
-            _ => {}
+        if let KeyCode::Char('q') = key_event.code {
+            self.exit();
         }
     }
 
@@ -66,17 +65,49 @@ impl App {
     }
 }
 
+impl Default for App {
+    fn default() -> Self {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+
+        Self {
+            exit: false,
+            total_memory: to_gigabytes(sys.total_memory()),
+            used_memory: to_gigabytes(sys.used_memory()),
+            cpus: sys.cpus().len(),
+            host: System::host_name().expect("Could not retrieve host name."),
+        }
+    }
+}
+
+fn to_gigabytes(bytes: u64) -> f32 {
+    ((bytes as f32 / 1024.0) / 1024.0) / 1024.0
+}
+
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Title::from(" Counter App Tutorial ".bold());
-        let instructions = Title::from(Line::from(vec![
-            " Decrement ".into(),
-            "<Left>".blue().bold(),
-            " Increment ".into(),
-            "<Right>".blue().bold(),
-            " Quit ".into(),
-            "<Q> ".blue().bold(),
-        ]));
+        let title = Title::from(self.host.clone().bold());
+        let text = vec![
+            Line::from(vec![
+                Span::raw("Total Memory (GB): "),
+                Span::styled(self.total_memory.to_string(), Style::new().green().italic()),
+            ]),
+            Line::from(vec![
+                Span::raw("Used Memory (GB): "),
+                Span::styled(self.used_memory.to_string(), Style::new().green().italic()),
+            ]),
+            Line::from(vec![
+                Span::raw("CPUs: "),
+                Span::styled(self.cpus.to_string(), Style::new().green().italic()),
+            ]),
+        ];
+        let info = Paragraph::new(text)
+            .block(Block::bordered().title("Paragraph"))
+            .style(Style::new().white().on_black())
+            .alignment(Alignment::Left)
+            .wrap(Wrap { trim: true });
+
+        let instructions = Title::from(Line::from(vec![" Quit ".into(), "<Q> ".blue().bold()]));
         let block = Block::bordered()
             .title(title.alignment(Alignment::Center))
             .title(
@@ -85,6 +116,10 @@ impl Widget for &App {
                     .position(Position::Bottom),
             )
             .border_set(border::THICK);
+
+        let info_block = info.block(block);
+
+        info_block.render(area, buf)
     }
 }
 
@@ -93,37 +128,4 @@ fn main() -> io::Result<()> {
     let app_result = App::default().run(&mut terminal);
     tui::restore()?;
     app_result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ratatui::style::Style;
-
-    #[test]
-    fn render() {
-        let app = App::default();
-        let mut buf = Buffer::empty(Rect::new(0, 0, 50, 4));
-
-        app.render(buf.area, &mut buf);
-
-        let mut expected = Buffer::with_lines(vec![
-            "┏━━━━━━━━━━━━━ Counter App Tutorial ━━━━━━━━━━━━━┓",
-            "┃                    Value: 0                    ┃",
-            "┃                                                ┃",
-            "┗━ Decrement <Left> Increment <Right> Quit <Q> ━━┛",
-        ]);
-        let title_style = Style::new().bold();
-        let counter_style = Style::new().yellow();
-        let key_style = Style::new().blue().bold();
-        expected.set_style(Rect::new(14, 0, 22, 1), title_style);
-        expected.set_style(Rect::new(28, 1, 1, 1), counter_style);
-        expected.set_style(Rect::new(13, 3, 6, 1), key_style);
-        expected.set_style(Rect::new(30, 3, 7, 1), key_style);
-        expected.set_style(Rect::new(43, 3, 4, 1), key_style);
-
-        // note ratatui also has an assert_buffer_eq! macro that can be used to
-        // compare buffers and display the differences in a more readable way
-        assert_eq!(buf, expected);
-    }
 }
