@@ -14,21 +14,18 @@ use ratatui::{
     Frame,
 };
 
-use sysinfo::System;
+use sysinfo::{Cpu, System};
 
 mod tui;
 
 #[derive(Debug)]
-pub struct App {
-    host: String,
-    cpus: usize,
-    // cpu_usage: u8,
-    total_memory: f32,
-    used_memory: f32,
+pub struct App<'a> {
+    name: String,
+    system: &'a System,
     exit: bool,
 }
 
-impl App {
+impl App<'_> {
     /// runs the application's main loop until the user quits
     pub fn run(&mut self, terminal: &mut tui::Tui) -> io::Result<()> {
         while !self.exit {
@@ -65,40 +62,27 @@ impl App {
     }
 }
 
-impl Default for App {
-    fn default() -> Self {
-        let mut sys = System::new_all();
-        sys.refresh_all();
-
-        Self {
-            exit: false,
-            total_memory: to_gigabytes(sys.total_memory()),
-            used_memory: to_gigabytes(sys.used_memory()),
-            cpus: sys.cpus().len(),
-            host: System::host_name().expect("Could not retrieve host name."),
-        }
-    }
-}
-
 fn to_gigabytes(bytes: u64) -> f32 {
     ((bytes as f32 / 1024.0) / 1024.0) / 1024.0
 }
 
-impl Widget for &App {
+impl Widget for &App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Title::from(self.host.clone().bold());
+        let title = Title::from(self.name.clone().bold());
         let text = vec![
             Line::from(vec![
                 Span::raw("Total Memory (GB): "),
-                Span::styled(self.total_memory.to_string(), Style::new().green().italic()),
+                Span::styled(
+                    to_gigabytes(self.system.total_memory()).to_string(),
+                    Style::new().green().italic(),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("Used Memory (GB): "),
-                Span::styled(self.used_memory.to_string(), Style::new().green().italic()),
-            ]),
-            Line::from(vec![
-                Span::raw("CPUs: "),
-                Span::styled(self.cpus.to_string(), Style::new().green().italic()),
+                Span::styled(
+                    to_gigabytes(self.system.used_memory()).to_string(),
+                    Style::new().green().italic(),
+                ),
             ]),
         ];
         let info = Paragraph::new(text)
@@ -124,8 +108,17 @@ impl Widget for &App {
 }
 
 fn main() -> io::Result<()> {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let mut app = App {
+        name: System::host_name().expect("Could not get name of host."),
+        system: &sys,
+        exit: false,
+    };
+
     let mut terminal = tui::init()?;
-    let app_result = App::default().run(&mut terminal);
+    let app_result = app.run(&mut terminal);
     tui::restore()?;
     app_result
 }
