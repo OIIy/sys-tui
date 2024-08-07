@@ -18,7 +18,7 @@ use ratatui::{
     Frame,
 };
 
-use sysinfo::{Cpu, CpuRefreshKind, RefreshKind, System};
+use sysinfo::{Cpu, System};
 
 mod tui;
 
@@ -26,7 +26,15 @@ mod tui;
 pub struct Clock {}
 
 impl Widget for &Clock {
-    fn render(self, area: Rect, buf: &mut Buffer) {}
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let tz = Local::now().naive_local();
+
+        let time_str = tz.format("%H:%M:%S").to_string();
+
+        let time = Paragraph::new(time_str);
+
+        time.render(area, buf)
+    }
 }
 
 #[derive(Debug)]
@@ -39,26 +47,34 @@ pub struct App<'a> {
 
 impl App<'_> {
     /// runs the application's main loop until the user quits
-    pub fn run(&mut self, terminal: &mut tui::Tui) -> io::Result<()> {
-        let mut last_update = Instant::now();
+    pub fn run(&mut self, terminal: &mut tui::Tui, tick_rate: Duration) -> io::Result<()> {
+        let last_tick = Instant::now();
 
-        while !self.exit {
-            terminal.draw(|frame| self.render_frame(frame))?;
-            if last_update.elapsed() >= Duration::from_secs(1) {
-                last_update = Instant::now(); // Reset timer
-
-                // Force a re-render on each second
-                terminal.draw(|frame| self.render_frame(frame))?;
+        loop {
+            if self.exit {
+                return Ok(());
             }
-            self.handle_events()?;
+
+            terminal.draw(|frame| self.render_frame(frame))?;
+
+            let timeout = tick_rate
+                .checked_sub(last_tick.elapsed())
+                .unwrap_or(Duration::ZERO);
+
+            if event::poll(timeout)? {
+                if let Event::Key(key) = event::read()? {
+                    if let KeyCode::Char('q') = key.code {
+                        self.exit = true;
+                    }
+                }
+            }
         }
-        Ok(())
     }
 
     fn render_frame(&mut self, frame: &mut Frame) {
         let mut cols: Vec<Constraint> = vec![];
 
-        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+        std::thread::sleep(Duration::from_secs(1));
 
         self.system.refresh_cpu_all();
 
@@ -69,19 +85,19 @@ impl App<'_> {
 
         let outer_layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Percentage(10), Constraint::Percentage(90)])
+            .constraints(vec![Constraint::Percentage(5), Constraint::Percentage(95)])
             .split(frame.size());
 
         let inner_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(cols)
-            .split(frame.size());
+            .split(outer_layout[1]);
 
         self.render_clock(frame, outer_layout[0]);
 
-        // for (index, cpu) in self.system.cpus().iter().enumerate() {
-        //     self.render_cpu(frame, cpu, inner_layout[index]);
-        // }
+        for (index, cpu) in self.system.cpus().iter().enumerate() {
+            self.render_cpu(frame, cpu, inner_layout[index]);
+        }
     }
 
     fn render_cpu(&self, frame: &mut Frame, cpu: &Cpu, area: Rect) {
@@ -101,24 +117,6 @@ impl App<'_> {
         frame.render_widget(time, area)
     }
 
-    fn handle_events(&mut self) -> io::Result<()> {
-        match event::read()? {
-            // it's important to check that the event is a key press event as
-            // crossterm also emits key release and repeat events on Windows.
-            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.handle_key_event(key_event)
-            }
-            _ => {}
-        };
-        Ok(())
-    }
-
-    fn handle_key_event(&mut self, key_event: KeyEvent) {
-        if let KeyCode::Char('q') = key_event.code {
-            self.exit();
-        }
-    }
-
     fn exit(&mut self) {
         self.exit = true;
     }
@@ -132,6 +130,8 @@ fn main() -> io::Result<()> {
     let mut sys = System::new_all();
     sys.refresh_all();
 
+    let tick_rate = Duration::from_millis(250);
+
     let mut app = App {
         clock: Clock {},
         name: System::host_name().expect("Could not get name of host."),
@@ -140,7 +140,7 @@ fn main() -> io::Result<()> {
     };
 
     let mut terminal = tui::init()?;
-    let app_result = app.run(&mut terminal);
+    let app_result = app.run(&mut terminal, tick_rate);
     tui::restore()?;
     app_result
 }
