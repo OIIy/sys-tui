@@ -1,4 +1,7 @@
-use std::io;
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 use ratatui::{
     buffer::Buffer,
@@ -14,48 +17,62 @@ use ratatui::{
     Frame,
 };
 
-use sysinfo::{Cpu, System};
+use sysinfo::{Cpu, CpuRefreshKind, RefreshKind, System};
 
 mod tui;
 
 #[derive(Debug)]
 pub struct App<'a> {
     name: String,
-    system: &'a System,
+    system: &'a mut System,
     exit: bool,
 }
 
 impl App<'_> {
     /// runs the application's main loop until the user quits
     pub fn run(&mut self, terminal: &mut tui::Tui) -> io::Result<()> {
+        let mut last_update = Instant::now();
+
         while !self.exit {
             terminal.draw(|frame| self.render_frame(frame))?;
+            if last_update.elapsed() >= Duration::from_secs(1) {
+                last_update = Instant::now(); // Reset timer
+
+                // Force a re-render on each second
+                terminal.draw(|frame| self.render_frame(frame))?;
+            }
             self.handle_events()?;
         }
         Ok(())
     }
 
-    fn render_frame(&self, frame: &mut Frame) {
-        // frame.render_widget(self, frame.size());
+    fn render_frame(&mut self, frame: &mut Frame) {
         let mut cols: Vec<Constraint> = vec![];
 
-        for cpu in self.system.cpus() {
+        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+
+        self.system.refresh_cpu_all();
+
+        for _cpu in self.system.cpus() {
             let col_size: usize = 100 / self.system.cpus().len();
             cols.push(Constraint::Percentage(col_size.try_into().unwrap()));
         }
 
-        // Horizontal for columns, Vertical for rows
         let outer_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(cols)
             .split(frame.size());
 
         for (index, cpu) in self.system.cpus().iter().enumerate() {
-            frame.render_widget(
-                Paragraph::new(cpu.name()).block(Block::new().borders(Borders::ALL)),
-                outer_layout[index],
-            );
+            self.render_cpu(frame, cpu, outer_layout[index]);
         }
+    }
+
+    fn render_cpu(&self, frame: &mut Frame, cpu: &Cpu, area: Rect) {
+        let cpu_block = Block::new().title(cpu.name()).borders(Borders::ALL);
+        let cpu_widget = Paragraph::new(cpu.cpu_usage().to_string()).block(cpu_block);
+
+        frame.render_widget(cpu_widget, area)
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
@@ -91,7 +108,7 @@ fn main() -> io::Result<()> {
 
     let mut app = App {
         name: System::host_name().expect("Could not get name of host."),
-        system: &sys,
+        system: &mut sys,
         exit: false,
     };
 
