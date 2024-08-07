@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chrono::{Local, Utc};
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
@@ -22,8 +23,16 @@ use sysinfo::{Cpu, CpuRefreshKind, RefreshKind, System};
 mod tui;
 
 #[derive(Debug)]
+pub struct Clock {}
+
+impl Widget for &Clock {
+    fn render(self, area: Rect, buf: &mut Buffer) {}
+}
+
+#[derive(Debug)]
 pub struct App<'a> {
     name: String,
+    clock: Clock,
     system: &'a mut System,
     exit: bool,
 }
@@ -59,13 +68,20 @@ impl App<'_> {
         }
 
         let outer_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![Constraint::Percentage(10), Constraint::Percentage(90)])
+            .split(frame.size());
+
+        let inner_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(cols)
             .split(frame.size());
 
-        for (index, cpu) in self.system.cpus().iter().enumerate() {
-            self.render_cpu(frame, cpu, outer_layout[index]);
-        }
+        self.render_clock(frame, outer_layout[0]);
+
+        // for (index, cpu) in self.system.cpus().iter().enumerate() {
+        //     self.render_cpu(frame, cpu, inner_layout[index]);
+        // }
     }
 
     fn render_cpu(&self, frame: &mut Frame, cpu: &Cpu, area: Rect) {
@@ -73,6 +89,16 @@ impl App<'_> {
         let cpu_widget = Paragraph::new(cpu.cpu_usage().to_string()).block(cpu_block);
 
         frame.render_widget(cpu_widget, area)
+    }
+
+    fn render_clock(&self, frame: &mut Frame, area: Rect) {
+        let tz = Local::now().naive_local();
+
+        let time_str = tz.format("%H:%M:%S").to_string();
+
+        let time = Paragraph::new(time_str);
+
+        frame.render_widget(time, area)
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
@@ -107,6 +133,7 @@ fn main() -> io::Result<()> {
     sys.refresh_all();
 
     let mut app = App {
+        clock: Clock {},
         name: System::host_name().expect("Could not get name of host."),
         system: &mut sys,
         exit: false,
